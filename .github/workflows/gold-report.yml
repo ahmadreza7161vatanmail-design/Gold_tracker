@@ -2,8 +2,8 @@ name: Monthly Gold Report
 
 on:
   schedule:
-    - cron: '0 9 1 * *'  # هر ماه، روز اول، ساعت ۹ صبح UTC
-  workflow_dispatch:     # اجرای دستی
+    - cron: '0 9 1 * *'  # هر ماه روز اول ساعت 9 صبح UTC
+  workflow_dispatch:     # امکان اجرای دستی
 
 jobs:
   send_report:
