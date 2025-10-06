@@ -1,50 +1,58 @@
-import requests, json
-from datetime import datetime
+import os
+import requests
+import json
 
-BOT_TOKEN = "8266440766:AAEV7VHtTNv6LCD3VUv9U_bZXBukXAE_kqU"
-CHAT_ID = "5617936602"
-LAST_VALUE_FILE = "last_gold_qty.json"
+# دریافت مقادیر از Secrets GitHub Actions
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+CHAT_ID = os.getenv("CHAT_ID")
+
+if not BOT_TOKEN or not CHAT_ID:
+    raise ValueError("BOT_TOKEN و CHAT_ID باید در Secrets تنظیم شوند.")
+
 API_URL = "https://api.fiscal.treasury.gov/services/api/fiscal_service/v2/accounting/od/gold_reserve"
+LAST_VALUE_FILE = "last_gold_qty.json"
 
-def fetch_current_gold_qty():
-    params = {"fields": "record_date,fine_troy_ounce_qty", "sort": "-record_date", "limit": 1}
-    r = requests.get(API_URL, params=params)
-    r.raise_for_status()
-    data = r.json()["data"][0]
-    return {"date": data["record_date"], "qty": float(data["fine_troy_ounce_qty"])}
-
-def load_last_value():
+def fetch_latest_two():
     try:
-        with open(LAST_VALUE_FILE, "r") as f:
-            return json.load(f)
-    except FileNotFoundError:
-        return None
+        params = {"fields":"record_date,fine_troy_ounce_qty","sort":"-record_date","limit":2}
+        r = requests.get(API_URL, params=params, timeout=30)
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        if not data:
+            raise ValueError("هیچ داده‌ای از API دریافت نشد.")
+        return data
+    except Exception as e:
+        raise RuntimeError(f"خطا در دریافت داده از API: {e}")
 
-def save_last_value(obj):
-    with open(LAST_VALUE_FILE, "w") as f:
-        json.dump(obj, f)
-
-def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    requests.post(url, data={"chat_id": CHAT_ID, "text": text})
-
-def check_gold_change():
-    current = fetch_current_gold_qty()
-    last = load_last_value()
-
-    if last:
-        diff = current["qty"] - last["qty"]
+def build_message(data):
+    cur = data[0]
+    cur_date = cur["record_date"]
+    cur_qty = float(cur["fine_troy_ounce_qty"])
+    if len(data) > 1:
+        prev = data[1]
+        prev_date = prev["record_date"]
+        prev_qty = float(prev["fine_troy_ounce_qty"])
+        diff = cur_qty - prev_qty
         if diff > 0:
-            msg = f"✅ دولت آمریکا طلا خریده است!\nافزایش {diff:,.2f} اونس در تاریخ {current['date']}"
+            return f"✅ دولت آمریکا طلا خریده\nافزایش {diff:,.2f} اونس\nتا تاریخ {cur_date} (مقایسه با {prev_date})"
         elif diff < 0:
-            msg = f"⚠️ دولت آمریکا طلا فروخته است!\nکاهش {abs(diff):,.2f} اونس در تاریخ {current['date']}"
+            return f"⚠️ دولت آمریکا طلا فروخته\nکاهش {abs(diff):,.2f} اونس\nتا تاریخ {cur_date} (مقایسه با {prev_date})"
         else:
-            msg = f"ℹ️ بدون تغییر در ذخایر طلا ({current['qty']:,.2f} اونس) تا {current['date']}"
+            return f"ℹ️ بدون تغییر: {cur_qty:,.2f} اونس تا تاریخ {cur_date} (مقایسه با {prev_date})"
     else:
-        msg = f"📊 مقدار اولیه ذخایر طلا: {current['qty']:,.2f} اونس ({current['date']})"
+        return f"📊 مقدار فعلی: {cur_qty:,.2f} اونس تا تاریخ {cur_date}"
 
-    send_telegram_message(msg)
-    save_last_value(current)
+def send_telegram_message(token, chat_id, text):
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    resp = requests.post(url, data={"chat_id": chat_id, "text": text}, timeout=30)
+    if resp.status_code != 200:
+        raise RuntimeError(f"ارسال پیام به تلگرام موفق نبود: {resp.text}")
+
+def main():
+    data = fetch_latest_two()
+    msg = build_message(data)
+    send_telegram_message(BOT_TOKEN, CHAT_ID, msg)
+    print("پیام با موفقیت ارسال شد ✅")
 
 if __name__ == "__main__":
-    check_gold_change()
+    main()
